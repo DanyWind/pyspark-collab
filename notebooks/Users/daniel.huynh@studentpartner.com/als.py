@@ -38,14 +38,6 @@ display(df)
 
 # COMMAND ----------
 
-df.count()
-
-# COMMAND ----------
-
-len(emb_to_movie), len(emb_to_usr)
-
-# COMMAND ----------
-
 # First we compute the unique users
 
 unique_usr = df.select('userId').distinct().collect()
@@ -65,10 +57,6 @@ emb_to_movie = {i : movie for i,movie in enumerate(unique_movie)}
 
 # COMMAND ----------
 
-usr_to_emb
-
-# COMMAND ----------
-
 from pyspark.sql.functions import col, create_map, lit
 from itertools import chain
 
@@ -80,23 +68,107 @@ df = df.withColumn("userId", mapping_usr.getItem(col("userId")))
 
 # COMMAND ----------
 
-t = df.select("userId").collect()
-
-# COMMAND ----------
-
-v = [x["userId"] for x in t]
-
-# COMMAND ----------
-
-sorted(usr_to_emb.values())
-
-# COMMAND ----------
-
-n
-
-# COMMAND ----------
-
 # TO DO : take care of the JOIN and the Cartesian product
+
+# COMMAND ----------
+
+t = keys.partitionBy(N_WORKERS).glom().collect()
+
+# COMMAND ----------
+
+keys = y.keys()
+keys = keys.map(lambda x : (x[1],1))
+keys = keys.reduceByKey(lambda x,y : x + y)
+
+# COMMAND ----------
+
+t = keys.take(10)
+
+# COMMAND ----------
+
+from pyspark.sql.types import StructType, IntegerType, StructField
+
+schema = StructType([StructField("movieId", IntegerType(), True), StructField("count", IntegerType(), True),])
+
+# COMMAND ----------
+
+t = sqlContext.createDataFrame(keys,schema)
+
+# COMMAND ----------
+
+from pyspark.sql.window import *
+window = Window.partitionBy("movieId")
+df = df.withColumn("CumSumTotal", sum(df.count).over(window))
+
+# COMMAND ----------
+
+df.createOrReplaceTempView("test")
+
+# COMMAND ----------
+
+movie_to_count = sqlContext.sql("select movieId,count, " +
+  "SUM(count) over (  order by movieId  rows between unbounded preceding and current row ) cum_count " +
+  "from test").rdd.map(lambda x : (x["movieId"], x["cum_count"])).map(lambda x : x[1]).collect()
+
+# COMMAND ----------
+
+N = y.count()
+
+# COMMAND ----------
+
+N
+
+# COMMAND ----------
+
+def count_partition(key):
+  key = int(( float(movie_to_count[key]) / N) * N_WORKERS)
+  return(key)
+
+# COMMAND ----------
+
+movie_to_count[]
+
+# COMMAND ----------
+
+test = y.keys().map(lambda x : (x[1],x[0]))
+
+
+# COMMAND ----------
+
+t = test.partitionBy(N_WORKERS,count_partition)
+
+# COMMAND ----------
+
+# Reverse key so that movieId is first
+t = y.map(lambda x : ( x[0][1], (x[0][0] , x[1] ) ) )
+
+# COMMAND ----------
+
+t.take(10)
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
+t.partitionBy(N_WORKERS,count_partition)
+
+# COMMAND ----------
+
+y = df.rdd.map(lambda x : ( (x["userId"],x["movieId"]), int(x["rating"])) )
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
+y.map(lambda x : ((x[0][1],x[0][0]),x[1] ).take(10)
+
+# COMMAND ----------
+
+for 
 
 # COMMAND ----------
 
@@ -119,8 +191,14 @@ V = np.random.randn(m,hidden_size)
 u_rows = sc.parallelize((i,U[i]) for i in range(n))
 v_rows = sc.parallelize((i,V[i]) for i in range(m))
 
-for l in range(N_EPOCH):
+# We create an RDD with key = (i,j) and values = rating
+y = df.rdd.map(lambda x : ( (x["userId"],x["movieId"]), int(x["rating"])) )
 
+# We then broadcast it
+sc.broadcast(y)
+
+for l in range(N_EPOCH):
+  
   # We get the cartesian product 
   u_v = u_rows.cartesian(v_rows)
 
@@ -131,12 +209,12 @@ for l in range(N_EPOCH):
   u_v_dot =  u_v.map(lambda x : ( (x[0][0],x[1][0]) , np.dot(x[0][1],x[1][1]) ) )
   u_v_dot.persist()
   
-  # We create an RDD with key = (i,j) and values = rating
-  y = df.rdd.map(lambda x : ( (x["userId"],x["movieId"]), x["rating"]) )
-  
   # We keep only the vectors where there is an observation and keep 
   u_v_y_dot = y.join(u_v_dot)
-
+  
+  # Free memory from the cartesian product
+  u_v.unpersist()
+  
   # We then take the difference between the prediction and the real value
   diff = u_v_y_dot.mapValues(lambda x : (x[1] - x[0]))
   diff.persist()
@@ -162,6 +240,53 @@ for l in range(N_EPOCH):
   # We make one step of a gradient descent
   u_rows = u_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1])
   v_rows = v_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1])
+  
+
+# COMMAND ----------
+
+y = y.collect()
+
+# COMMAND ----------
+
+sc.broadcast(y)
+
+# COMMAND ----------
+
+import numpy as np
+
+# HHYPER-PARAMETERS
+
+N_EPOCH = 100
+step = 0.01
+hidden_size = 5
+
+n = len(usr_to_emb)
+m = len(movie_to_emb)
+
+# Matrixes which represent our embeddings
+U = np.random.randn(n,hidden_size)
+V = np.random.randn(m,hidden_size)
+
+# We then create our RDDs from the matrixes
+u_rows = sc.parallelize((i,U[i]) for i in range(n))
+v_rows = sc.parallelize((i,V[i]) for i in range(m))
+
+v_rows_broad = sc.broadcast(v_rows.collect())
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
+""" coalesce : merger localement
+ broadcaster 
+ unperist
+ 
+ Checkpoint : toutes les 50 opérations
+ Cocoa : API Spark pour updater localement
+ 
+ """
 
 # COMMAND ----------
 
