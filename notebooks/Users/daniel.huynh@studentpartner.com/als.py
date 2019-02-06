@@ -195,9 +195,13 @@ v_rows = sc.parallelize((i,V[i]) for i in range(m))
 y = df.rdd.map(lambda x : ( (x["userId"],x["movieId"]), int(x["rating"])) )
 
 # We then broadcast it
-sc.broadcast(y)
+sc.broadcast(y.collect())
 
 for l in range(N_EPOCH):
+  
+  if l > 0:
+    u_rows = sc.parallelize(u_rows)
+    v_rows = sc.parallelize(v_rows)
   
   # We get the cartesian product 
   u_v = u_rows.cartesian(v_rows)
@@ -207,13 +211,9 @@ for l in range(N_EPOCH):
   u_v_vect.persist()
 
   u_v_dot =  u_v.map(lambda x : ( (x[0][0],x[1][0]) , np.dot(x[0][1],x[1][1]) ) )
-  u_v_dot.persist()
   
   # We keep only the vectors where there is an observation and keep 
   u_v_y_dot = y.join(u_v_dot)
-  
-  # Free memory from the cartesian product
-  u_v.unpersist()
   
   # We then take the difference between the prediction and the real value
   diff = u_v_y_dot.mapValues(lambda x : (x[1] - x[0]))
@@ -238,9 +238,96 @@ for l in range(N_EPOCH):
   agg_grad_v = grad_v.map(lambda x : (x[0], (1,x[1]))).reduceByKey(lambda x,y : (x[0] + y[0],x[1] + y[1])).mapValues(lambda x : x[1] / x[0])
   
   # We make one step of a gradient descent
-  u_rows = u_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1])
-  v_rows = v_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1])
+  u_rows = u_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1]).collect()
+  v_rows = v_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1]).collect()
   
+  # Free u_v_vect and diff
+  u_v_vect.unpersist()
+  diff.unpersist()
+  grads.unpersist()
+
+# COMMAND ----------
+
+Time : 23.06 minutes
+MSE : 3.239010
+
+# COMMAND ----------
+
+"""Version 2"""
+
+import numpy as np
+
+# HHYPER-PARAMETERS
+
+N_EPOCH = 100
+step = 0.01
+hidden_size = 5
+
+n = len(usr_to_emb)
+m = len(movie_to_emb)
+
+# Matrixes which represent our embeddings
+U = np.random.randn(n,hidden_size)
+V = np.random.randn(m,hidden_size)
+
+# We then create our RDDs from the matrixes
+u_rows = sc.parallelize((i,U[i]) for i in range(n))
+v_rows = sc.parallelize((i,V[i]) for i in range(m))
+
+# We create an RDD with key = (i,j) and values = rating
+y = df.rdd.map(lambda x : ( (x["userId"],x["movieId"]), int(x["rating"])) )
+
+# We then broadcast it
+sc.broadcast(y.collect())
+
+for l in range(N_EPOCH):
+  
+  if l > 0:
+    u_rows = sc.parallelize(u_rows)
+    v_rows = sc.parallelize(v_rows)
+  
+  # We get the cartesian product 
+  u_v = u_rows.cartesian(v_rows)
+
+  # Then we get a key value with keys = (i,j), and values = (u,v) i.e. the index of user/product and the associated vectors
+  u_v_vect = u_v.map(lambda x : ( (x[0][0],x[1][0]) , (x[0][1],x[1][1]) ) ) 
+  u_v_vect.persist()
+
+  u_v_dot =  u_v.map(lambda x : ( (x[0][0],x[1][0]) , np.dot(x[0][1],x[1][1]) ) )
+  
+  # We keep only the vectors where there is an observation and keep 
+  u_v_y_dot = y.join(u_v_dot)
+  
+  # We then take the difference between the prediction and the real value
+  diff = u_v_y_dot.mapValues(lambda x : (x[1] - x[0]))
+  diff.persist()
+
+  # We compute the mean squared loss
+  loss = diff.mapValues(lambda x : x**2).map(lambda x: x[1]).mean() / 2
+  
+  # We print the loss
+  print("Current loss at epoch %i : %f" % (l,loss))
+  
+  # We compute the gradients for each pair
+  grads = u_v_vect.join(diff)
+  grads.persist()
+
+  # We then compute the gradients wrt u and v
+  grad_u = grads.map(lambda x : (x[0][0], x[1][0][1] * x[1][1]))
+  grad_v = grads.map(lambda x : (x[0][1], x[1][0][0] * x[1][1]))
+  
+  # We take the average of each batch
+  agg_grad_u = grad_u.map(lambda x : (x[0], (1,x[1]))).reduceByKey(lambda x,y : (x[0] + y[0],x[1] + y[1])).mapValues(lambda x : x[1] / x[0])
+  agg_grad_v = grad_v.map(lambda x : (x[0], (1,x[1]))).reduceByKey(lambda x,y : (x[0] + y[0],x[1] + y[1])).mapValues(lambda x : x[1] / x[0])
+  
+  # We make one step of a gradient descent
+  u_rows = u_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1]).collect()
+  v_rows = v_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1]).collect()
+  
+  # Free u_v_vect and diff
+  u_v_vect.unpersist()
+  diff.unpersist()
+  grads.unpersist()
 
 # COMMAND ----------
 
