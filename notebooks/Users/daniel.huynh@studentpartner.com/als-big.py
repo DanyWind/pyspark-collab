@@ -42,29 +42,23 @@ df = df.withColumn("rating", df["rating"].cast(FloatType()))
 unique_usr = df.select('userId').distinct().collect()
 unique_usr = [row.asDict()["userId"] for row in unique_usr]
 
-usr_to_emb = [(usr, i) for i,usr in enumerate(unique_usr)]
-emb_to_usr = [(i,usr) for i,usr in enumerate(unique_usr)]
+#usr_to_emb = [(usr, i) for i,usr in enumerate(unique_usr)]
+#emb_to_usr = [(i,usr) for i,usr in enumerate(unique_usr)]
+
+usr_to_emb = {usr : i for i,usr in enumerate(unique_usr)}
+emb_to_usr = {i : usr for i,usr in enumerate(unique_usr)}
 
 # COMMAND ----------
 
 unique_movie = df.select('movieId').distinct().collect()
 unique_movie = [int(row.asDict()["movieId"]) for row in unique_movie]
 
-movie_to_emb = [(movie, i) for i,movie in enumerate(unique_movie)]
-emb_to_movie = [(i, movie) for i,movie in enumerate(unique_movie)]
-
-
-# COMMAND ----------
+#movie_to_emb = [(movie, i) for i,movie in enumerate(unique_movie)]
+#emb_to_movie = [(i, movie) for i,movie in enumerate(unique_movie)]
 
 movie_to_emb = {movie : i for i,movie in enumerate(unique_movie)}
+emb_to_movie = {i : movie for i,movie in enumerate(unique_movie)}
 
-# COMMAND ----------
-
-usr_to_emb_broad = sc.parallelize(usr_to_emb).collectAsMap()
-
-# COMMAND ----------
-
-movie_to_emb_broad = sc.parallelize(movie_to_emb).collectAsMap()
 
 # COMMAND ----------
 
@@ -72,7 +66,11 @@ y = df.rdd.map(lambda x : (usr_to_emb_broad[x["userId"]], movie_to_emb_broad[x["
 
 # COMMAND ----------
 
-movie_to_emb_broad[1]
+y = df.rdd.map(lambda x : (usr_to_emb[x["userId"]], movie_to_emb[x["movieId"]], x["rating"]))
+
+# COMMAND ----------
+
+y.take(1)
 
 # COMMAND ----------
 
@@ -159,7 +157,44 @@ MSE : 3.239010
 
 # COMMAND ----------
 
-y.map(lambda x : (x[0], (x[1],x[2]))).take(1)
+from pyspark.ml.linalg import Vectors
+
+import numpy as np
+
+# HHYPER-PARAMETERS
+
+N_EPOCH = 25
+step = 0.01
+hidden_size = 5
+
+n = len(usr_to_emb)
+m = len(movie_to_emb)
+
+# Matrixes which represent our embeddings
+U = np.random.randn(n,hidden_size)
+V = np.random.randn(m,hidden_size)
+
+a = np.concatenate([np.arange(n).reshape(n,1), U],axis = 1)
+dff = map(lambda x: (int(x[0]), Vectors.dense(x[1:])), a)
+
+mydf = spark.createDataFrame(dff,schema=["userId", "vector"])
+
+# COMMAND ----------
+
+y = df.rdd.map(lambda x : (usr_to_emb[x["userId"]], movie_to_emb[x["movieId"]], x["rating"]))
+y = y.toDF(["userId","movieId","rating"])
+
+# COMMAND ----------
+
+from pyspark.sql.functions import broadcast
+
+y_broad = broadcast(y)
+
+# COMMAND ----------
+
+
+
+t = mydf.join(y_broad, mydf.userId == y.userId).collect()
 
 # COMMAND ----------
 
@@ -209,7 +244,7 @@ u_rows = sc.parallelize((i,U[i]) for i in range(n))
 v_rows = sc.parallelize((i,V[i]) for i in range(m))
 
 # We create an RDD with key = (i,j) and values = rating
-y = df.rdd.map(lambda x : (usr_to_emb_broad[x["userId"]], movie_to_emb_broad[x["movieId"]], x["rating"]))
+y = df.rdd.map(lambda x : (usr_to_emb[x["userId"]], movie_to_emb[x["movieId"]], x["rating"]))
 
 # We then broadcast it
 # sc.broadcast(y.collect())
