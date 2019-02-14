@@ -45,18 +45,11 @@ unique_usr = [row.asDict()["userId"] for row in unique_usr]
 usr_to_emb = {usr : i for i,usr in enumerate(unique_usr)}
 emb_to_usr = {i : usr for i,usr in enumerate(unique_usr)}
 
-# COMMAND ----------
-
 unique_movie = df.select('movieId').distinct().collect()
 unique_movie = [int(row.asDict()["movieId"]) for row in unique_movie]
 
 movie_to_emb = {movie : i for i,movie in enumerate(unique_movie)}
 emb_to_movie = {i : movie for i,movie in enumerate(unique_movie)}
-
-
-# COMMAND ----------
-
-y = df.rdd.map(lambda x : (usr_to_emb[x["userId"]], movie_to_emb[x["movieId"]], x["rating"]))
 
 # COMMAND ----------
 
@@ -170,19 +163,6 @@ from pyspark.ml.linalg import Vectors
 
 # COMMAND ----------
 
-a = np.concatenate([np.arange(n).reshape(n,1), U],axis = 1)
-dff = map(lambda x: (int(x[0]), Vectors.dense(x[1:])), a)
-
-# COMMAND ----------
-
-mydf = spark.createDataFrame(dff,schema=["userId", "vector"])
-
-# COMMAND ----------
-
-mydf.take(1)
-
-# COMMAND ----------
-
 y = df.rdd.map(lambda x : (usr_to_emb[x["userId"]], movie_to_emb[x["movieId"]], x["rating"]))
 y = y.toDF(["userId","movieId","rating"])
 
@@ -219,7 +199,7 @@ import numpy as np
 
 N_EPOCH = 25
 step = 0.01
-hidden_size = 5
+hidden_size = 8
 
 n = len(usr_to_emb)
 m = len(movie_to_emb)
@@ -234,9 +214,6 @@ v_rows = sc.parallelize((i,V[i]) for i in range(m))
 
 # We create an RDD with key = (i,j) and values = rating
 y = df.rdd.map(lambda x : ( (x["userId"],x["movieId"]), int(x["rating"])) )
-
-# We then broadcast it
-sc.broadcast(y.collect())
 
 for l in range(N_EPOCH):
   
@@ -682,18 +659,6 @@ t
 
 # COMMAND ----------
 
-t[1][0][1]
-
-# COMMAND ----------
-
-t[0][0]
-
-# COMMAND ----------
-
-diff.take(10)
-
-# COMMAND ----------
-
 t = grad_u.take(10)[0]
 
 # COMMAND ----------
@@ -736,38 +701,6 @@ t = df.select(["movieId","userId"]).rdd.map(tuple)
 
 # COMMAND ----------
 
-def acc_grad(x,y):
-  u
-
-t.groupByKey().reduceByKey()
-
-# COMMAND ----------
-
-import pickle
-
-# Saving the mappings
-
-with open('emb_to_movie.pickle', 'wb') as handle:
-    pickle.dump(emb_to_movie, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    
-with open('emb_to_usr.pickle', 'wb') as handle:
-    pickle.dump(emb_to_usr, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-with open('usr_to_emb.pickle', 'wb') as handle:
-    pickle.dump(usr_to_emb, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-with open('movie_to_emb.pickle', 'wb') as handle:
-    pickle.dump(movie_to_emb, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-# COMMAND ----------
-
-import pickle
-
-"""with open('./emb_to_movie.pickle', 'r') as handle:
-  emb_to_movie = pickle.load(handle)"""
-
-# COMMAND ----------
-
 from pyspark.sql.types import IntegerType, FloatType
 
 file_location = "/FileStore/tables/ratings_small_embedded.csv"
@@ -788,33 +721,3 @@ df = spark.read.format(file_type) \
 df = df.withColumn("userId", df["userId"].cast(IntegerType()))
 df = df.withColumn("movieId", df["movieId"].cast(IntegerType()))
 df = df.withColumn("rating", df["rating"].cast(FloatType()))
-
-# COMMAND ----------
-
-display(df)
-
-# COMMAND ----------
-
-
-
-# COMMAND ----------
-
-# Create a view or table
-
-temp_table_name = "ratings_csv"
-
-df.createOrReplaceTempView(temp_table_name)
-
-# COMMAND ----------
-
-
-
-# COMMAND ----------
-
-# With this registered as a temp view, it will only be available to this particular notebook. If you'd like other users to be able to query this table, you can also create a table from the DataFrame.
-# Once saved, this table will persist across cluster restarts as well as allow various users across different notebooks to query this data.
-# To do so, choose your table name and uncomment the bottom line.
-
-permanent_table_name = "ratings_csv"
-
-# df.write.format("parquet").saveAsTable(permanent_table_name)
