@@ -34,7 +34,6 @@ df = df.withColumn("userId", df["userId"].cast(IntegerType()))
 df = df.withColumn("movieId", df["movieId"].cast(IntegerType()))
 df = df.withColumn("rating", df["rating"].cast(FloatType()))
 
-display(df)
 
 # COMMAND ----------
 
@@ -57,86 +56,15 @@ emb_to_movie = {i : movie for i,movie in enumerate(unique_movie)}
 
 # COMMAND ----------
 
-from pyspark.sql.functions import col, create_map, lit
-from itertools import chain
-
-mapping_movie = create_map([lit(x) for x in chain(*movie_to_emb.items())])
-mapping_usr = create_map([lit(x) for x in chain(*usr_to_emb.items())])
-
-df = df.withColumn("movieId", mapping_movie.getItem(col("movieId")))
-df = df.withColumn("userId", mapping_usr.getItem(col("userId")))
+y = df.rdd.map(lambda x : (usr_to_emb[x["userId"]], movie_to_emb[x["movieId"]], x["rating"]))
 
 # COMMAND ----------
 
-df.take(10)
+import numpy as np
 
-# COMMAND ----------
-
-# TO DO : take care of the JOIN and the Cartesian product
-
-# COMMAND ----------
-
-t = keys.partitionBy(N_WORKERS).glom().collect()
-
-# COMMAND ----------
-
-y = df.rdd.map(lambda x : ( (x["userId"],x["movieId"]), int(x["rating"])) )
-keys = y.keys()
-keys = keys.map(lambda x : (x[0],1))
-keys = keys.reduceByKey(lambda x,y : x + y)
-
-
-
-# COMMAND ----------
-
-df_test = spark.createDataFrame(keys).toDF("userId", "count")
-
-# COMMAND ----------
-
-df_test.createTempView("test3")
-
-# COMMAND ----------
-
-
-# Create a RDD with cumulative count of total movies
-usr_to_count = sqlContext.sql("select userId,count, " +
-  "SUM(count) over (  order by userId  rows between unbounded preceding and current row ) cum_count " +
-  "from test3")
-
-# COMMAND ----------
-
-usr_cum_count = usr_to_count.rdd.map(lambda x : x["cum_count"]).collect()
-
-# COMMAND ----------
-
-len(usr_cum_count)
-
-# COMMAND ----------
-
-N = y.count()
-
-# COMMAND ----------
-
-n
-
-# COMMAND ----------
-
-def count_partition(key):
-  key = int(( float(usr_cum_count[key]) / N) * N_WORKERS)
-  return(key)
-
-# COMMAND ----------
-
-count_partition(250)
-
-# COMMAND ----------
-
-test = y.keys().map(lambda x : (x[1],x[0]))
-
-
-# COMMAND ----------
-
-t = test.partitionBy(N_WORKERS,count_partition)
+def sigmoid(x):
+  output = 1 / (1 + np.exp(-x))
+  return(output)
 
 # COMMAND ----------
 
@@ -223,151 +151,11 @@ MSE : 3.239010
 
 # COMMAND ----------
 
-u_rows = sc.parallelize(u_rows)
-
-
-
-# COMMAND ----------
-
-y.take(10)
-
-# COMMAND ----------
-
-t.take(1)
-
-# COMMAND ----------
-
-u_rows.take(10)
-
-# COMMAND ----------
-
-t = y.map(lambda x : (x[0][0], (x[0][1] , x[1]) ))
-
-a = t.join(u_rows)
-
-# COMMAND ----------
-
-b = a.map(lambda x : (x[1][0][0], (x[0], x[1][1], x[1][0][1]) ))
-
-# COMMAND ----------
-
-v_rows = sc.parallelize(v_rows)
-
-# COMMAND ----------
-
-b.take(1)
-
-# COMMAND ----------
-
-c = b.join(v_rows)
-
-# COMMAND ----------
-
-x = c.take(1)
-
-# COMMAND ----------
-
-x = x[0]
-
-# COMMAND ----------
-
-v_rows.sortByKey().collect()[0]
-
-# COMMAND ----------
-
-x[1][1]
-
-# COMMAND ----------
-
-# We want now to have (i,j,u,v,y, ŷ)
-c = b.join(v_rows)
-d = c.map(lambda x : ((x[1][0][0], x[0]) , (x[1][0][1], x[1][1], x[1][0][2], np.dot(x[1][0][1], x[1][1]), np.dot(x[1][0][1], x[1][1]) - x[1][0][2]) ))
-
-# COMMAND ----------
-
-d.take(10)
-
-# COMMAND ----------
-
-t = d.mapValues(lambda x : x[4]**2).map(lambda x: x[1]).mean() / 2
-
-# COMMAND ----------
-
-t = d.take(10)[0]
-
-# COMMAND ----------
-
-u_rows.sortByKey().collect()[260]
-
-# COMMAND ----------
-
-t[0]
-
-# COMMAND ----------
-
-t[0][1][4]
-
-# COMMAND ----------
-
-U = np.random.randn(n,hidden_size)
-V = np.random.randn(m,hidden_size)
-
-# We then create our RDDs from the matrixes
-u_rows = sc.parallelize((i,U[i]) for i in range(n))
-v_rows = sc.parallelize((i,V[i]) for i in range(m))
-
-# We create an RDD with key = (i,j) and values = rating
-y = df.rdd.map(lambda x : ( (x["userId"],x["movieId"]), int(x["rating"])) )
-
-# We then broadcast it
-sc.broadcast(y.collect())
-
-# COMMAND ----------
-
-a = y.map(lambda x : (x[0][0], (x[0][1] , x[1]) )).join(u_rows)
-  
-  # Then we reorder in order to join with the V matrix
-b = a.map(lambda x : (x[1][0][0], (x[0], x[1][1], x[1][0][1]) ))
-  
-  # We then join and reorder into ((i,j) ,(u,v,y,y_pred,diff))
-c = b.join(v_rows)
-u_v_y_dot = c.map(lambda x : ((x[1][0][0], x[0]) , (x[1][0][1], x[1][1], x[1][0][2], np.dot(x[1][0][1], x[1][1]), np.dot(x[1][0][1], x[1][1]) - x[1][0][2]) ))
-
-loss = d.mapValues(lambda x : x[4]**2).map(lambda x: x[1]).mean() / 2
-
-# COMMAND ----------
-
-t = u_v_y_dot.take(1)[0]
-
-# COMMAND ----------
-
-t
-
-# COMMAND ----------
-
-t[1][4]
-
-# COMMAND ----------
-
-grad_u = u_v_y_dot.map(lambda x : (x[0][0], x[1][4] * x[1][1]))
-
-# COMMAND ----------
-
-grad_v = u_v_y_dot.map(lambda x : (x[0][1], x[1][4] * x[1][0]))
-
-# COMMAND ----------
-
-grad_v.take(1)[0]
-
-# COMMAND ----------
-
-"""Version 2 : deleted cartesian product and optimized join"""
-
 import numpy as np
 
 # HHYPER-PARAMETERS
 
-N_EPOCH = 100
+N_EPOCH = 25
 step = 0.01
 hidden_size = 5
 
@@ -378,81 +166,58 @@ m = len(movie_to_emb)
 U = np.random.randn(n,hidden_size)
 V = np.random.randn(m,hidden_size)
 
-# We then create our RDDs from the matrixes
+from pyspark.ml.linalg import Vectors
+
+# COMMAND ----------
+
+a = np.concatenate([np.arange(n).reshape(n,1), U],axis = 1)
+dff = map(lambda x: (int(x[0]), Vectors.dense(x[1:])), a)
+
+# COMMAND ----------
+
+mydf = spark.createDataFrame(dff,schema=["userId", "vector"])
+
+# COMMAND ----------
+
+mydf.take(1)
+
+# COMMAND ----------
+
+y = df.rdd.map(lambda x : (usr_to_emb[x["userId"]], movie_to_emb[x["movieId"]], x["rating"]))
+y = y.toDF(["userId","movieId","rating"])
+
+# COMMAND ----------
+
+from pyspark.sql.functions import broadcast
+
+t = mydf.join(broadcast(y), mydf.userId == y.userId).collect()
+
+# COMMAND ----------
+
+y = df.rdd.map(lambda x : (usr_to_emb[x["userId"]], movie_to_emb[x["movieId"]], x["rating"]))
+
+
+# COMMAND ----------
+
+a = y.join(u_rows).collect()
+
+# COMMAND ----------
+
 u_rows = sc.parallelize((i,U[i]) for i in range(n))
-v_rows = sc.parallelize((i,V[i]) for i in range(m))
-
-# We create an RDD with key = (i,j) and values = rating
-y = df.rdd.map(lambda x : ( (x["userId"],x["movieId"]), int(x["rating"])) )
-
-# We then broadcast it
-sc.broadcast(y.collect())
-
-for l in range(N_EPOCH):
-  
-  # First we map the observations with the local U matrix
-  a = y.map(lambda x : (x[0][0], (x[0][1] , x[1]) )).join(u_rows)
-  
-  # Then we reorder in order to join with the V matrix
-  b = a.map(lambda x : (x[1][0][0], (x[0], x[1][1], x[1][0][1]) ))
-  
-  # We then join and reorder into ((i,j) ,(u,v,y,y_pred,diff))
-  c = b.join(v_rows)
-  u_v_y_dot = c.map(lambda x : ((x[1][0][0], x[0]) , (x[1][0][1], x[1][1], x[1][0][2], np.dot(x[1][0][1], x[1][1]), np.dot(x[1][0][1], x[1][1]) - x[1][0][2]) ))
-
-  # Then we get a key value with keys = (i,j), and values = (u,v) i.e. the index of user/product and the associated vectors
-  #u_v_vect = u_v.map(lambda x : ( (x[0][0],x[1][0]) , (x[0][1],x[1][1]) ) ) 
-  #u_v_vect.persist()
-
-  #u_v_dot =  u_v.map(lambda x : ( (x[0][0],x[1][0]) , np.dot(x[0][1],x[1][1]) ) )
-  
-  # We then take the difference between the prediction and the real value
-  #diff = u_v_y_dot.mapValues(lambda x : (x[3] - x[2]))
-  #diff.persist()
-
-  # We compute the mean squared loss
-  loss = u_v_y_dot.mapValues(lambda x : x[4]**2).map(lambda x: x[1]).mean() / 2
-  
-  # We print the loss
-  print("Current loss at epoch %i : %f" % (l,loss))
-  
-  # We compute the gradients for each pair
-  #grads = u_v_vect.join(diff)
-  #grads.persist()
-
-  # We then compute the gradients wrt u and v
-  grad_u = u_v_y_dot.map(lambda x : (x[0][0], x[1][4] * x[1][1]))
-  grad_v = u_v_y_dot.map(lambda x : (x[0][1], x[1][4] * x[1][0]))
-  
-  # We take the average of each batch
-  agg_grad_u = grad_u.map(lambda x : (x[0], (1,x[1]))).reduceByKey(lambda x,y : (x[0] + y[0],x[1] + y[1])).mapValues(lambda x : x[1] / x[0])
-  agg_grad_v = grad_v.map(lambda x : (x[0], (1,x[1]))).reduceByKey(lambda x,y : (x[0] + y[0],x[1] + y[1])).mapValues(lambda x : x[1] / x[0])
-  
-  # We make one step of a gradient descent
-  u_rows = u_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1])
-  v_rows = v_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1])
-  
-  u_rows.coalesce()
-  v_rows.coalesce()
-  
-  # Free u_v_vect and diff
-  #u_v_vect.unpersist()
-  #diff.unpersist()
-  #grads.unpersist()
 
 # COMMAND ----------
 
-y = y.collect()
+mydf.join(broa)
 
 # COMMAND ----------
 
-"""Version 3 : deleted cartesian product and optimized join"""
+"""Version 2 : deleted cartesian product and optimized join"""
 
 import numpy as np
 
 # HHYPER-PARAMETERS
 
-N_EPOCH = 100
+N_EPOCH = 25
 step = 0.01
 hidden_size = 5
 
@@ -528,6 +293,275 @@ for l in range(N_EPOCH):
 
 # COMMAND ----------
 
+"""Version 3 : Coalesce"""
+
+import numpy as np
+
+# HHYPER-PARAMETERS
+N_WORKERS = 8
+N_EPOCH = 25
+step = 0.01
+hidden_size = 5
+
+n = len(usr_to_emb)
+m = len(movie_to_emb)
+
+# Matrixes which represent our embeddings
+U = np.random.randn(n,hidden_size)
+V = np.random.randn(m,hidden_size)
+
+# We then create our RDDs from the matrixes
+u_rows = sc.parallelize((i,U[i]) for i in range(n))
+v_rows = sc.parallelize((i,V[i]) for i in range(m))
+
+# We create an RDD with key = (i,j) and values = rating
+y = df.rdd.map(lambda x : ( (x["userId"],x["movieId"]), int(x["rating"])) )
+
+# We then broadcast it
+sc.broadcast(y.collect())
+
+for l in range(N_EPOCH):
+  
+  # First we map the observations with the local U matrix
+  a = y.map(lambda x : (x[0][0], (x[0][1] , x[1]) )).join(u_rows)
+  
+  # Then we reorder in order to join with the V matrix
+  b = a.map(lambda x : (x[1][0][0], (x[0], x[1][1], x[1][0][1]) ))
+  
+  # We then join and reorder into ((i,j) ,(u,v,y,y_pred,diff))
+  c = b.join(v_rows)
+  u_v_y_dot = c.map(lambda x : ((x[1][0][0], x[0]) , (x[1][0][1], x[1][1], x[1][0][2], np.dot(x[1][0][1], x[1][1]), np.dot(x[1][0][1], x[1][1]) - x[1][0][2]) ))
+
+  # Then we get a key value with keys = (i,j), and values = (u,v) i.e. the index of user/product and the associated vectors
+  #u_v_vect = u_v.map(lambda x : ( (x[0][0],x[1][0]) , (x[0][1],x[1][1]) ) ) 
+  #u_v_vect.persist()
+
+  #u_v_dot =  u_v.map(lambda x : ( (x[0][0],x[1][0]) , np.dot(x[0][1],x[1][1]) ) )
+  
+  # We then take the difference between the prediction and the real value
+  #diff = u_v_y_dot.mapValues(lambda x : (x[3] - x[2]))
+  #diff.persist()
+
+  # We compute the mean squared loss
+  loss = u_v_y_dot.mapValues(lambda x : x[4]**2).map(lambda x: x[1]).mean() / 2
+  
+  # We print the loss
+  print("Current loss at epoch %i : %f" % (l,loss))
+  
+  # We compute the gradients for each pair
+  #grads = u_v_vect.join(diff)
+  #grads.persist()
+
+  # We then compute the gradients wrt u and v
+  grad_u = u_v_y_dot.map(lambda x : (x[0][0], x[1][4] * x[1][1]))
+  grad_v = u_v_y_dot.map(lambda x : (x[0][1], x[1][4] * x[1][0]))
+  
+  # We take the average of each batch
+  agg_grad_u = grad_u.map(lambda x : (x[0], (1,x[1]))).reduceByKey(lambda x,y : (x[0] + y[0],x[1] + y[1])).mapValues(lambda x : x[1] / x[0])
+  agg_grad_v = grad_v.map(lambda x : (x[0], (1,x[1]))).reduceByKey(lambda x,y : (x[0] + y[0],x[1] + y[1])).mapValues(lambda x : x[1] / x[0])
+  
+  # We make one step of a gradient descent
+  u_rows = u_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1])
+  v_rows = v_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1])
+  
+  u_rows.coalesce(N_WORKERS)
+  v_rows.coalesce(N_WORKERS)
+  
+  # Free u_v_vect and diff
+  #u_v_vect.unpersist()
+  #diff.unpersist()
+  #grads.unpersist()
+
+# COMMAND ----------
+
+y = df.rdd.map(lambda x : ( (x["userId"],x["movieId"]), int(x["rating"])) )
+keys = y.keys()
+keys = keys.map(lambda x : (x[0],1))
+keys = keys.reduceByKey(lambda x,y : x + y)
+
+df_test = spark.createDataFrame(keys).toDF("userId", "count")
+df_test.createTempView("test3")
+
+# Create a RDD with cumulative count of total movies
+usr_to_count = sqlContext.sql("select userId,count, " +
+  "SUM(count) over (  order by userId  rows between unbounded preceding and current row ) cum_count " +
+  "from test3")
+
+usr_cum_count = usr_to_count.rdd.map(lambda x : x["cum_count"]).collect()
+
+def count_partition(key):
+  key = int(( float(usr_cum_count[key]) / N) * N_WORKERS)
+  return(key)
+
+# COMMAND ----------
+
+"""Version 3 : partition by key"""
+
+import numpy as np
+
+# HHYPER-PARAMETERS
+N_WORKERS = 8
+N_EPOCH = 25
+step = 0.01
+hidden_size = 5
+
+n = len(usr_to_emb)
+m = len(movie_to_emb)
+
+# Matrixes which represent our embeddings
+U = np.random.randn(n,hidden_size)
+V = np.random.randn(m,hidden_size)
+N = df.count()
+
+# We then create our RDDs from the matrixes
+u_rows = sc.parallelize((i,U[i]) for i in range(n))
+v_rows = sc.parallelize((i,V[i]) for i in range(m))
+
+# We create an RDD with key = (i,j) and values = rating
+y = df.rdd.map(lambda x : ( (x["userId"],x["movieId"]), int(x["rating"])) )
+
+# We then broadcast it
+sc.broadcast(y.collect())
+
+for l in range(N_EPOCH):
+  
+  if l > 0:
+    u_rows = sc.parallelize(u_rows)
+    v_rows = sc.parallelize(v_rows)
+  
+  u_rows.partitionBy(N_WORKERS,count_partition)
+  
+  # First we map the observations with the local U matrix
+  a = y.map(lambda x : (x[0][0], (x[0][1] , x[1]) )).join(u_rows)
+  
+  # Then we reorder in order to join with the V matrix
+  b = a.map(lambda x : (x[1][0][0], (x[0], x[1][1], x[1][0][1]) ))
+  
+  # We then join and reorder into ((i,j) ,(u,v,y,y_pred,diff))
+  c = b.join(v_rows)
+  u_v_y_dot = c.map(lambda x : ((x[1][0][0], x[0]) , (x[1][0][1], x[1][1], x[1][0][2], np.dot(x[1][0][1], x[1][1]), np.dot(x[1][0][1], x[1][1]) - x[1][0][2]) ))
+
+  # Then we get a key value with keys = (i,j), and values = (u,v) i.e. the index of user/product and the associated vectors
+  #u_v_vect = u_v.map(lambda x : ( (x[0][0],x[1][0]) , (x[0][1],x[1][1]) ) ) 
+  #u_v_vect.persist()
+
+  #u_v_dot =  u_v.map(lambda x : ( (x[0][0],x[1][0]) , np.dot(x[0][1],x[1][1]) ) )
+  
+  # We then take the difference between the prediction and the real value
+  #diff = u_v_y_dot.mapValues(lambda x : (x[3] - x[2]))
+  #diff.persist()
+
+  # We compute the mean squared loss
+  loss = u_v_y_dot.mapValues(lambda x : x[4]**2).map(lambda x: x[1]).mean() / 2
+  
+  # We print the loss
+  print("Current loss at epoch %i : %f" % (l,loss))
+  
+  # We compute the gradients for each pair
+  #grads = u_v_vect.join(diff)
+  #grads.persist()
+
+  # We then compute the gradients wrt u and v
+  grad_u = u_v_y_dot.map(lambda x : (x[0][0], x[1][4] * x[1][1]))
+  grad_v = u_v_y_dot.map(lambda x : (x[0][1], x[1][4] * x[1][0]))
+  
+  # We take the average of each batch
+  agg_grad_u = grad_u.map(lambda x : (x[0], (1,x[1]))).reduceByKey(lambda x,y : (x[0] + y[0],x[1] + y[1])).mapValues(lambda x : x[1] / x[0])
+  agg_grad_v = grad_v.map(lambda x : (x[0], (1,x[1]))).reduceByKey(lambda x,y : (x[0] + y[0],x[1] + y[1])).mapValues(lambda x : x[1] / x[0])
+  
+  # We make one step of a gradient descent
+  u_rows = u_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1]).collect()
+  v_rows = v_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1]).collect()
+  
+  # Free u_v_vect and diff
+  #u_v_vect.unpersist()
+  #diff.unpersist()
+  #grads.unpersist()
+
+# COMMAND ----------
+
+"""Version 2 : deleted cartesian product and optimized join"""
+
+import numpy as np
+
+# HHYPER-PARAMETERS
+
+N_EPOCH = 100
+step = 0.01
+hidden_size = 5
+
+n = len(usr_to_emb)
+m = len(movie_to_emb)
+
+# Matrixes which represent our embeddings
+U = np.random.randn(n,hidden_size)
+V = np.random.randn(m,hidden_size)
+
+# We then create our RDDs from the matrixes
+u_rows = sc.parallelize((i,U[i]) for i in range(n))
+v_rows = sc.parallelize((i,V[i]) for i in range(m))
+
+# We create an RDD with key = (i,j) and values = rating
+y = df.rdd.map(lambda x : ( (x["userId"],x["movieId"]), int(x["rating"])) )
+
+# We then broadcast it
+sc.broadcast(y.collect())
+
+for l in range(N_EPOCH):
+  
+  if l > 0:
+    u_rows = sc.parallelize(u_rows)
+    v_rows = sc.parallelize(v_rows)
+  
+  # First we map the observations with the local U matrix
+  a = y.map(lambda x : (x[0][0], (x[0][1] , x[1]) )).join(u_rows)
+  
+  # Then we reorder in order to join with the V matrix
+  b = a.map(lambda x : (x[1][0][0], (x[0], x[1][1], x[1][0][1]) ))
+  
+  # We then join and reorder into ((i,j) ,(u,v,y,y_pred,diff))
+  c = b.join(v_rows)
+  u_v_y_dot = c.map(lambda x : ((x[1][0][0], x[0]) , (x[1][0][1], x[1][1], x[1][0][2], 1 + 4 * sigmoid(np.dot(x[1][0][1], x[1][1])), np.dot(x[1][0][1], x[1][1]) - x[1][0][2],sigmoid(np.dot(x[1][0][1], x[1][1])) ) ) )
+
+  # Then we get a key value with keys = (i,j), and values = (u,v) i.e. the index of user/product and the associated vectors
+  #u_v_vect = u_v.map(lambda x : ( (x[0][0],x[1][0]) , (x[0][1],x[1][1]) ) ) 
+  #u_v_vect.persist()
+
+  #u_v_dot =  u_v.map(lambda x : ( (x[0][0],x[1][0]) , np.dot(x[0][1],x[1][1]) ) )
+  
+  # We then take the difference between the prediction and the real value
+  #diff = u_v_y_dot.mapValues(lambda x : (x[3] - x[2]))
+  #diff.persist()
+
+  # We compute the mean squared loss
+  loss = u_v_y_dot.mapValues(lambda x : x[4]**2).map(lambda x: x[1]).mean() / 2
+  
+  # We print the loss
+  print("Current loss at epoch %i : %f" % (l,loss))
+  
+  # We compute the gradients for each pair
+  #grads = u_v_vect.join(diff)
+  #grads.persist()
+
+  # We then compute the gradients wrt u and v
+  grad_u = u_v_y_dot.map(lambda x : (x[0][0], 4 * x[1][4] * x[1][5] * (1 - x[1][5]) * x[1][1]))
+  grad_v = u_v_y_dot.map(lambda x : (x[0][1], 4 * x[1][4] * x[1][5] * (1 - x[1][5]) * x[1][0]))
+  
+  # We take the average of each batch
+  agg_grad_u = grad_u.map(lambda x : (x[0], (1,x[1]))).reduceByKey(lambda x,y : (x[0] + y[0],x[1] + y[1])).mapValues(lambda x : x[1] / x[0])
+  agg_grad_v = grad_v.map(lambda x : (x[0], (1,x[1]))).reduceByKey(lambda x,y : (x[0] + y[0],x[1] + y[1])).mapValues(lambda x : x[1] / x[0])
+  
+  # We make one step of a gradient descent
+  u_rows = u_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1]).collect()
+  v_rows = v_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1]).collect()
+  
+  # Free u_v_vect and diff
+  #u_v_vect.unpersist()
+  #diff.unpersist()
+  #grads.unpersist()
+
+# COMMAND ----------
+
 import numpy as np
 
 # HHYPER-PARAMETERS
@@ -551,7 +585,7 @@ v_rows_broad = sc.broadcast(v_rows.collect())
 
 # COMMAND ----------
 
-
+y.count()
 
 # COMMAND ----------
 
@@ -762,16 +796,6 @@ display(df)
 # COMMAND ----------
 
 
-
-# COMMAND ----------
-
-import pyspark.sql.functions as F
-
-df.agg(F.countDistinct("movieId")).collect()[0]
-
-# COMMAND ----------
-
-df.agg(F.countDistinct("userId")).collect()[0]
 
 # COMMAND ----------
 
