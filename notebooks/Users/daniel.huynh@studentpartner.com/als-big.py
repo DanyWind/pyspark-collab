@@ -1,17 +1,13 @@
 # Databricks notebook source
-# MAGIC %md ## Overview
-# MAGIC 
-# MAGIC This notebook will show you how to create and query a table or DataFrame that you uploaded to DBFS. [DBFS](https://docs.databricks.com/user-guide/dbfs-databricks-file-system.html) is a Databricks File System that allows you to store data for querying inside of Databricks. This notebook assumes that you have a file already inside of DBFS that you would like to read from.
-# MAGIC 
-# MAGIC This notebook is written in **Python** so the default cell type is Python. However, you can use different languages by using the `%LANGUAGE` syntax. Python, Scala, SQL, and R are all supported.
+# MAGIC %md ## Database management project
 
 # COMMAND ----------
 
 from pyspark.sql.types import IntegerType, FloatType
 
 # File location and type
-file_location = "/FileStore/tables/ratings.csv"
-#file_location = "/FileStore/tables/ratings_small.csv"
+#file_location = "/FileStore/tables/ratings.csv"
+file_location = "/FileStore/tables/ratings_small.csv"
 file_type = "csv"
 
 # CSV options
@@ -147,11 +143,16 @@ MSE : 3.239010
 
 """Version 2 : deleted cartesian product and optimized join"""
 
+import time
+
+times2 = []
+start = time.time()
+
 import numpy as np
 
 # HHYPER-PARAMETERS
 N_WORKERS = 8
-N_EPOCH = 5
+N_EPOCH = 50
 step = 0.01
 hidden_size = 5
 
@@ -173,6 +174,10 @@ y = df.rdd.map(lambda x : (usr_to_emb[x["userId"]], movie_to_emb[x["movieId"]], 
 # sc.broadcast(y.collect())
 
 for l in range(N_EPOCH):
+  
+  if l > 0:
+    u_rows = sc.parallelize(u_rows)
+    v_rows = sc.parallelize(v_rows)
   
   # First we map the observations with the local U matrix
   a = y.map(lambda x : (x[0], (x[1],x[2]))).join(u_rows)
@@ -213,8 +218,11 @@ for l in range(N_EPOCH):
   agg_grad_v = grad_v.map(lambda x : (x[0], (1,x[1]))).reduceByKey(lambda x,y : (x[0] + y[0],x[1] + y[1])).mapValues(lambda x : x[1] / x[0])
   
   # We make one step of a gradient descent
-  u_rows = u_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1])
-  v_rows = v_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1])
+  u_rows = u_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1]).collect()
+  v_rows = v_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1]).collect()
+  
+  diff = time.time() - start
+  times2.append(diff)
   
   #u_rows.coalesce(N_WORKERS)
   #v_rows.coalesce(N_WORKERS)
@@ -226,19 +234,26 @@ for l in range(N_EPOCH):
 
 # COMMAND ----------
 
-Time ; 8.59 m
-Epochs : 3
-Loss : 9.12
+# MAGIC %md Dataset : big<br>
+# MAGIC Time ; 8.59 m<br>
+# MAGIC Epochs : 3<br>
+# MAGIC Loss : 9.12
 
 # COMMAND ----------
 
-Time : 14.26 m
-Epochs : 5
-Loss : 9.05
+# MAGIC %md Dataset : big <br>
+# MAGIC Time : 14.26 m<br>
+# MAGIC Epochs : 5<br>
+# MAGIC Loss : 9.05
 
 # COMMAND ----------
 
 """Version 3 : added coalesce"""
+
+import time
+
+times3 = []
+start = time.time()
 
 import numpy as np
 
@@ -312,6 +327,9 @@ for l in range(N_EPOCH):
   u_rows.coalesce(N_WORKERS)
   v_rows.coalesce(N_WORKERS)
   
+  diff = time.time() - start
+  times3.append(diff)
+  
   # Free u_v_vect and diff
   #u_v_vect.unpersist()
   #diff.unpersist()
@@ -319,23 +337,32 @@ for l in range(N_EPOCH):
 
 # COMMAND ----------
 
-Time : 15.83
-Epochs : 5
-Loss : 9.04
+# MAGIC %md Dataset : big<br>
+# MAGIC Time : 15.83<br>
+# MAGIC Epochs : 5<br>
+# MAGIC Loss : 9.04
 
 # COMMAND ----------
 
-3 epoch : 7:57 mins with loss of 9.19
+# MAGIC %md Dataset : big<br>
+# MAGIC Time : 7.57<br>
+# MAGIC Epochs : 3<br>
+# MAGIC Loss : 9.19
 
 # COMMAND ----------
 
 """Version 4 : added broadcasting"""
 
+import time
+
+times4= []
+start = time.time()
+
 import numpy as np
 
 # HHYPER-PARAMETERS
 N_WORKERS = 8
-N_EPOCH = 3
+N_EPOCH = 50
 step = 0.01
 hidden_size = 5
 
@@ -405,6 +432,9 @@ for l in range(N_EPOCH):
   u_rows = u_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1]).collect()
   v_rows = v_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1]).collect()
   
+  diff = time.time() - start
+  times4.append(diff)
+  
   #u_rows.coalesce(N_WORKERS)
   #v_rows.coalesce(N_WORKERS)
   
@@ -415,13 +445,25 @@ for l in range(N_EPOCH):
 
 # COMMAND ----------
 
-"""Version 4 : added broadcasting"""
+# MAGIC %md
+# MAGIC Dataset : small 
+# MAGIC Epoch : 50
+# MAGIC Time : 1.33 minutes
+# MAGIC Loss : 5.6
+
+# COMMAND ----------
+
+"""Version 5 : added partitioning"""
+import time
+
+times5 = []
+start = time.time()
 
 import numpy as np
 
 # HHYPER-PARAMETERS
 N_WORKERS = 8
-N_EPOCH = 3
+N_EPOCH = 50
 step = 0.01
 hidden_size = 5
 
@@ -465,6 +507,11 @@ def count_partition(key):
   return(key)
 
 for l in range(N_EPOCH):
+  
+  if l > 0:
+    u_rows = sc.parallelize(u_rows)
+    v_rows = sc.parallelize(v_rows)
+    
   # Partitioning
   u_rows = u_rows.partitionBy(N_WORKERS,count_partition)
   
@@ -507,13 +554,47 @@ for l in range(N_EPOCH):
   agg_grad_v = grad_v.map(lambda x : (x[0], (1,x[1]))).reduceByKey(lambda x,y : (x[0] + y[0],x[1] + y[1])).mapValues(lambda x : x[1] / x[0])
   
   # We make one step of a gradient descent
-  u_rows = u_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1])
-  v_rows = v_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1])
+  u_rows = u_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1]).collect()
+  v_rows = v_rows.join(agg_grad_u).mapValues(lambda x : x[0] - step * x[1]).collect()
   
-  u_rows.coalesce(N_WORKERS)
-  v_rows.coalesce(N_WORKERS)
+  diff = time.time() - start
+  times5.append(diff)
+  
+  #u_rows.coalesce(N_WORKERS)
+  #v_rows.coalesce(N_WORKERS)
   
   # Free u_v_vect and diff
   #u_v_vect.unpersist()
   #diff.unpersist()
   #grads.unpersist()
+
+# COMMAND ----------
+
+import time
+
+start = time.time()
+print("hello")
+end = time.time()
+diff = end - start
+print(diff)
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots()
+line1, = ax.plot(times2,label= "Vanilla")
+line2, = ax.plot(times4,label = "Broadcast")
+line3, = ax.plot(times5, label = "Broadcast + partition")
+
+ax.set_xlabel("Epochs")
+ax.set_ylabel("Time")
+ax.set_title("Performances on the small dataset")
+
+ax.legend(handles = [line1,line2,line3],loc = 1)
+
+display(fig)
