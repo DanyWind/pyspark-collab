@@ -30,9 +30,6 @@ df = df.withColumn("userId", df["userId"].cast(IntegerType()))
 df = df.withColumn("movieId", df["movieId"].cast(IntegerType()))
 df = df.withColumn("rating", df["rating"].cast(FloatType()))
 
-
-# COMMAND ----------
-
 # First we compute the unique users
 
 unique_usr = df.select('userId').distinct().collect()
@@ -43,9 +40,6 @@ unique_usr = [row.asDict()["userId"] for row in unique_usr]
 
 usr_to_emb = {usr : i for i,usr in enumerate(unique_usr)}
 emb_to_usr = {i : usr for i,usr in enumerate(unique_usr)}
-
-# COMMAND ----------
-
 unique_movie = df.select('movieId').distinct().collect()
 unique_movie = [int(row.asDict()["movieId"]) for row in unique_movie]
 
@@ -55,6 +49,20 @@ unique_movie = [int(row.asDict()["movieId"]) for row in unique_movie]
 movie_to_emb = {movie : i for i,movie in enumerate(unique_movie)}
 emb_to_movie = {i : movie for i,movie in enumerate(unique_movie)}
 
+import numpy as np
+
+# HHYPER-PARAMETERS
+N_WORKERS = 8
+N_EPOCH = 100
+step = 0.01
+hidden_size = 5
+
+n = len(usr_to_emb)
+m = len(movie_to_emb)
+
+# Matrixes which represent our embeddings
+U = np.random.randn(n,hidden_size)
+V = np.random.randn(m,hidden_size)
 
 # COMMAND ----------
 
@@ -148,20 +156,7 @@ import time
 times2 = []
 start = time.time()
 
-import numpy as np
-
-# HHYPER-PARAMETERS
-N_WORKERS = 8
-N_EPOCH = 50
-step = 0.01
-hidden_size = 5
-
-n = len(usr_to_emb)
-m = len(movie_to_emb)
-
-# Matrixes which represent our embeddings
-U = np.random.randn(n,hidden_size)
-V = np.random.randn(m,hidden_size)
+losses2 = []
 
 # We then create our RDDs from the matrixes
 u_rows = sc.parallelize((i,U[i]) for i in range(n))
@@ -224,6 +219,8 @@ for l in range(N_EPOCH):
   diff = time.time() - start
   times2.append(diff)
   
+  losses2.append(loss)
+  
   #u_rows.coalesce(N_WORKERS)
   #v_rows.coalesce(N_WORKERS)
   
@@ -231,6 +228,13 @@ for l in range(N_EPOCH):
   #u_v_vect.unpersist()
   #diff.unpersist()
   #grads.unpersist()
+
+# COMMAND ----------
+
+# MAGIC %md Dataset : small<br>
+# MAGIC Time ; 5.27  minutes<br>
+# MAGIC Epochs : 100<br>
+# MAGIC Loss : 3.5
 
 # COMMAND ----------
 
@@ -254,21 +258,6 @@ import time
 
 times3 = []
 start = time.time()
-
-import numpy as np
-
-# HHYPER-PARAMETERS
-N_WORKERS = 8
-N_EPOCH = 5
-step = 0.01
-hidden_size = 5
-
-n = len(usr_to_emb)
-m = len(movie_to_emb)
-
-# Matrixes which represent our embeddings
-U = np.random.randn(n,hidden_size)
-V = np.random.randn(m,hidden_size)
 
 # We then create our RDDs from the matrixes
 u_rows = sc.parallelize((i,U[i]) for i in range(n))
@@ -357,21 +346,7 @@ import time
 
 times4= []
 start = time.time()
-
-import numpy as np
-
-# HHYPER-PARAMETERS
-N_WORKERS = 8
-N_EPOCH = 50
-step = 0.01
-hidden_size = 5
-
-n = len(usr_to_emb)
-m = len(movie_to_emb)
-
-# Matrixes which represent our embeddings
-U = np.random.randn(n,hidden_size)
-V = np.random.randn(m,hidden_size)
+losses4 = []
 
 # We then create our RDDs from the matrixes
 u_rows = sc.parallelize((i,U[i]) for i in range(n))
@@ -435,6 +410,8 @@ for l in range(N_EPOCH):
   diff = time.time() - start
   times4.append(diff)
   
+  losses4.append(loss)
+  
   #u_rows.coalesce(N_WORKERS)
   #v_rows.coalesce(N_WORKERS)
   
@@ -442,6 +419,13 @@ for l in range(N_EPOCH):
   #u_v_vect.unpersist()
   #diff.unpersist()
   #grads.unpersist()
+
+# COMMAND ----------
+
+# MAGIC %md Dataset : small<br>
+# MAGIC Epoch : 100<br>
+# MAGIC Time : 2.64<br>
+# MAGIC Loss : 3.6
 
 # COMMAND ----------
 
@@ -458,21 +442,7 @@ import time
 
 times5 = []
 start = time.time()
-
-import numpy as np
-
-# HHYPER-PARAMETERS
-N_WORKERS = 8
-N_EPOCH = 50
-step = 0.01
-hidden_size = 5
-
-n = len(usr_to_emb)
-m = len(movie_to_emb)
-
-# Matrixes which represent our embeddings
-U = np.random.randn(n,hidden_size)
-V = np.random.randn(m,hidden_size)
+losses5 = []
 
 # We then create our RDDs from the matrixes
 u_rows = sc.parallelize((i,U[i]) for i in range(n))
@@ -560,6 +530,8 @@ for l in range(N_EPOCH):
   diff = time.time() - start
   times5.append(diff)
   
+  losses5.append(loss)
+  
   #u_rows.coalesce(N_WORKERS)
   #v_rows.coalesce(N_WORKERS)
   
@@ -570,17 +542,10 @@ for l in range(N_EPOCH):
 
 # COMMAND ----------
 
-import time
-
-start = time.time()
-print("hello")
-end = time.time()
-diff = end - start
-print(diff)
-
-# COMMAND ----------
-
-
+# MAGIC %md Dataset : small<br>
+# MAGIC Time : 2.89<br>
+# MAGIC Epochs : 100<br>
+# MAGIC Loss : 3.6
 
 # COMMAND ----------
 
@@ -598,3 +563,25 @@ ax.set_title("Performances on the small dataset")
 ax.legend(handles = [line1,line2,line3],loc = 1)
 
 display(fig)
+
+# COMMAND ----------
+
+losses5
+
+# COMMAND ----------
+
+fig, ax = plt.subplots()
+line1, = ax.plot(losses2,label= "Vanilla")
+line2, = ax.plot(losses4,label = "Broadcast")
+line3, = ax.plot(losses5, label = "Broadcast + partition")
+
+ax.set_xlabel("Epochs")
+ax.set_ylabel("Loss")
+ax.set_title("Performances on the small dataset")
+
+ax.legend(handles = [line1,line2,line3],loc = 1)
+
+display(fig)
+
+# COMMAND ----------
+
