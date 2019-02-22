@@ -566,10 +566,6 @@ display(fig)
 
 # COMMAND ----------
 
-losses5
-
-# COMMAND ----------
-
 fig, ax = plt.subplots()
 line1, = ax.plot(losses2,label= "Vanilla")
 line2, = ax.plot(losses4,label = "Broadcast")
@@ -582,6 +578,3 @@ ax.set_title("Performances on the small dataset")
 ax.legend(handles = [line1,line2,line3],loc = 1)
 
 display(fig)
-
-# COMMAND ----------
-
